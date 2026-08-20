@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>今天的小老師</title>
+  <style>
+    :root {
+      --ink: #25415c;
+      --accent: #ef8d62;
+      --paper: #fffaf2;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 15% 15%, #ffe2bd 0 10%, transparent 28%), #eaf4f1;
+    }
+
+    main {
+      width: min(560px, 100%);
+      padding: 48px 28px;
+      text-align: center;
+      background: var(--paper);
+      border-radius: 28px;
+      box-shadow: 0 16px 42px #34515a26;
+    }
+
+    .plant {
+      font-size: 56px;
+      line-height: 1;
+    }
+
+    h1 {
+      margin: 12px 0 8px;
+      font-size: clamp(32px, 8vw, 46px);
+    }
+
+    .lead {
+      margin: 0 auto 28px;
+      line-height: 1.7;
+      font-size: 18px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 999px;
+      min-width: 200px;
+      padding: 16px 26px;
+      color: white;
+      background: var(--accent);
+      font-size: 20px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 5px 0 #c96f4a;
+    }
+
+    button:disabled {
+      opacity: .65;
+      cursor: wait;
+    }
+
+    #status {
+      min-height: 54px;
+      margin: 28px 0 0;
+      padding: 12px;
+      border-radius: 14px;
+      line-height: 1.6;
+      font-weight: 600;
+      white-space: pre-line;
+    }
+
+    .listening { background: #fff0db; color: #9a541d; }
+    .success { background: #e1f1e3; color: #32663a; }
+    .error { background: #fde6e1; color: #a33b30; }
+
+    .hint {
+      margin-top: 18px;
+      color: #657887;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <div class="plant">🌱</div>
+    <h1>今天的小老師</h1>
+    <p class="lead">準備好了嗎？<br>按下開始，告訴我你的座號。</p>
+
+    <button id="startButton" type="button">開始</button>
+
+    <p id="status" aria-live="polite"></p>
+    <p class="hint">請說：「我是八號，我要開始了。」</p>
+  </main>
+
+  <script>
+    const APPS_SCRIPT_URL =
+      'https://script.google.com/macros/s/AKfycbxEvQT55zSp01kpPINJ6Sv6KmnSRzQHaVANH2fJxPlR1O0USj44agEoIcDf-qdeseWM/exec';
+
+    const button = document.getElementById('startButton');
+    const statusBox = document.getElementById('status');
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    function setStatus(message, type = '') {
+      statusBox.textContent = message;
+      statusBox.className = type;
+    }
+
+    function parseSeatNumber(text) {
+      const arabic = text.match(/(?:我是|我)?\s*(\d{1,2})\s*號/);
+      if (arabic) return Number(arabic[1]);
+
+      const chinese = text.match(/(?:我是|我)?\s*([一二三四五六七八九十兩零〇]{1,3})\s*號/);
+      if (!chinese) return null;
+
+      const chars = {
+        零: 0, 〇: 0, 一: 1, 二: 2, 兩: 2,
+        三: 3, 四: 4, 五: 5, 六: 6, 七: 7,
+        八: 8, 九: 9, 十: 10
+      };
+
+      const word = chinese[1];
+
+      if (word === '十') return 10;
+
+      if (word.includes('十')) {
+        const [tens, ones] = word.split('十');
+        return (tens ? chars[tens] : 1) * 10 + (ones ? chars[ones] : 0);
+      }
+
+      return chars[word] ?? null;
+    }
+
+    function saveStart(seat) {
+      const callback = `teacherStart_${Date.now()}`;
+
+      window[callback] = (data) => {
+        delete window[callback];
+        document.getElementById(callback)?.remove();
+
+        if (data.error) {
+          setStatus(`無法寫入紀錄：${data.error}`, 'error');
+        } else {
+          setStatus(
+            `😊 ${data.seatNumber} 號你好！今天也歡迎你回來。\n我們開始吧！\n（已於 ${data.startedAt} 記錄）`,
+            'success'
+          );
+        }
+
+        button.disabled = false;
+      };
+
+      const script = document.createElement('script');
+      script.id = callback;
+
+      script.onerror = () => {
+        setStatus('無法連接 Google Sheet，請稍後再試。', 'error');
+        button.disabled = false;
+      };
+
+      script.src =
+        `${APPS_SCRIPT_URL}?action=logStart&seat=${encodeURIComponent(seat)}&callback=${callback}`;
+
+      document.body.appendChild(script);
+    }
+
+    function beginRecognition() {
+      if (!SpeechRecognition) {
+        setStatus('請使用最新版 Google Chrome 開啟此網站。', 'error');
+        return;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'zh-TW';
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 3;
+
+      button.disabled = true;
+      setStatus('正在聽你說話…', 'listening');
+
+      recognition.onresult = (event) => {
+        const seat = [...event.results[0]]
+          .map(item => item.transcript)
+          .map(parseSeatNumber)
+          .find(Number.isInteger);
+
+        if (!Number.isInteger(seat) || seat < 1 || seat > 99) {
+          setStatus('我沒有聽清楚座號。請再按一次開始，說「我是八號」。', 'error');
+          button.disabled = false;
+          return;
+        }
+
+        setStatus(`聽到了：${seat} 號。正在記錄…`, 'listening');
+        saveStart(seat);
+      };
+
+      recognition.onerror = (event) => {
+        const messages = {
+          'not-allowed': '請允許瀏覽器使用麥克風後再試一次。',
+          'no-speech': '沒有聽到聲音，請再按一次開始。'
+        };
+
+        setStatus(
+          messages[event.error] || `語音辨識暫時無法使用：${event.error}`,
+          'error'
+        );
+
+        button.disabled = false;
+      };
+
+      recognition.start();
+    }
+
+    button.addEventListener('click', beginRecognition);
+  </script>
+</body>
+</html>
